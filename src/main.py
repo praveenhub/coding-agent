@@ -1,17 +1,26 @@
-from google import genai
-from google.genai import types
-import os
-import sys
-from pathlib import Path
-from src.tools import (
-    read_file, list_files, edit_file, execute_bash_command,
-    run_in_sandbox, find_arxiv_papers, get_current_date_and_time,
-    upload_pdf_for_gemini, google_search, open_url
-)
-import traceback
 import argparse
 import functools
 import logging
+import os
+import sys
+import traceback
+from pathlib import Path
+
+from google import genai
+from google.genai import types
+
+from src.tools import (
+    edit_file,
+    execute_bash_command,
+    find_arxiv_papers,
+    get_current_date_and_time,
+    google_search,
+    list_files,
+    open_url,
+    read_file,
+    run_in_sandbox,
+    upload_pdf_for_gemini,
+)
 
 # Choose your Gemini model - unless you want something crazy "gemini-2.5-flash-preview-04-17" is the default model
 MODEL_NAME = "gemini-2.5-flash-preview-04-17"
@@ -19,6 +28,7 @@ DEFAULT_THINKING_BUDGET = 256
 
 # Define project root - needed here for agent initialization
 project_root = Path(__file__).resolve().parents[1]
+
 
 # --- Code Agent Class ---
 class CodeAgent:
@@ -28,7 +38,7 @@ class CodeAgent:
         """Initializes the agent with API key and model name."""
         self.api_key = api_key
         self.verbose = verbose
-        self.model_name = f'models/{model_name}' # Add 'models/' prefix
+        self.model_name = f"models/{model_name}"  # Add 'models/' prefix
         # Use imported tool functions
         self.tool_functions = [
             read_file,
@@ -39,15 +49,15 @@ class CodeAgent:
             find_arxiv_papers,
             get_current_date_and_time,
             google_search,
-            open_url
+            open_url,
         ]
         if self.verbose:
             self.tool_functions = [self._make_verbose_tool(f) for f in self.tool_functions]
         self.client = None
         self.chat = None
-        self.conversation_history = [] # Manual history for token counting ONLY
-        self.current_token_count = 0 # Store token count for the next prompt
-        self.active_files = [] # List to store active File objects
+        self.conversation_history = []  # Manual history for token counting ONLY
+        self.current_token_count = 0  # Store token count for the next prompt
+        self.active_files = []  # List to store active File objects
         self._configure_client()
 
     def _configure_client(self):
@@ -84,7 +94,9 @@ class CodeAgent:
 
         # Prompt for thinking budget per session
         try:
-            budget_input = input(f"Enter thinking budget (0 to 24000) for this session [{DEFAULT_THINKING_BUDGET}]: ").strip()
+            budget_input = input(
+                f"Enter thinking budget (0 to 24000) for this session [{DEFAULT_THINKING_BUDGET}]: "
+            ).strip()
             self.thinking_budget = int(budget_input) if budget_input else DEFAULT_THINKING_BUDGET
         except ValueError:
             print(f"⚠️ Invalid thinking budget. Using default of {DEFAULT_THINKING_BUDGET}.")
@@ -108,23 +120,26 @@ class CodeAgent:
                 if not user_input:
                     continue
 
-                # --- Handle User Commands --- 
+                # --- Handle User Commands ---
                 if user_input.lower().startswith("/upload "):
-                    pdf_path_str = user_input[len("/upload "):].strip()
+                    pdf_path_str = user_input[len("/upload ") :].strip()
                     if pdf_path_str:
                         # Make sure genai is configured before calling upload
                         if not self.client:
-                             self._configure_client()
-                             if not self.client:
-                                 print("\n\u274c Cannot upload: genai client not configured.")
-                                 continue # Skip to next loop iteration
+                            self._configure_client()
+                            if not self.client:
+                                print("\n\u274c Cannot upload: genai client not configured.")
+                                continue  # Skip to next loop iteration
                         # Call the upload function (which prints status)
                         uploaded_file = upload_pdf_for_gemini(pdf_path_str)
                         if uploaded_file:
                             print("\n⚒️ Extracting text from PDF to seed context...")
                             extraction_response = self.chat.send_message(
-                                message=[uploaded_file, "\n\nExtract the entire text of this PDF, organized by section. Include all tables, and figures (full descriptions where appropriate in place of images)."],
-                                config=tool_config
+                                message=[
+                                    uploaded_file,
+                                    "\n\nExtract the entire text of this PDF, organized by section. Include all tables, and figures (full descriptions where appropriate in place of images).",
+                                ],
+                                config=tool_config,
                             )
                             extraction_content = extraction_response.candidates[0].content
                             self.conversation_history.append(extraction_content)
@@ -134,7 +149,7 @@ class CodeAgent:
                         # No else needed, upload_pdf_for_gemini prints errors
                     else:
                         print("\n⚠️ Usage: /upload <relative/path/to/your/file.pdf>")
-                    continue # Skip sending this command to the model
+                    continue  # Skip sending this command to the model
 
                 elif user_input.lower() == "/reset":
                     print("\n🎯 Resetting context and starting a new chat session...")
@@ -142,44 +157,46 @@ class CodeAgent:
                     self.conversation_history = []
                     self.current_token_count = 0
                     print("\n✅ Chat session and history cleared.")
-                    continue # Skip sending this command to the model
+                    continue  # Skip sending this command to the model
 
                 # --- Prepare message content (Text + Files) ---
-                message_content = [user_input] # Start with user text
+                message_content = [user_input]  # Start with user text
                 if self.active_files:
-                    message_content.extend(self.active_files) # Add file objects
+                    message_content.extend(self.active_files)  # Add file objects
                     if self.verbose:
                         print(f"\n📎 Attaching {len(self.active_files)} files to the prompt:")
                         for f in self.active_files:
                             print(f"   - {f.display_name} ({f.name})")
 
-                # --- Update manual history (for token counting ONLY - Use Text Only) --- 
+                # --- Update manual history (for token counting ONLY - Use Text Only) ---
                 # Add user message BEFORE sending to model
                 # Store only the text part for history counting simplicity
                 new_user_content = types.Content(parts=[types.Part(text=user_input)], role="user")
                 self.conversation_history.append(new_user_content)
 
-                # --- Send Message --- 
+                # --- Send Message ---
                 print("\n⏳ Sending message and processing...")
                 # Prepare tool configuration
-                tool_config = types.GenerateContentConfig(tools=self.tool_functions, thinking_config=self.thinking_config)
+                tool_config = types.GenerateContentConfig(
+                    tools=self.tool_functions, thinking_config=self.thinking_config
+                )
 
                 # Send message using the chat object's send_message method
                 # Pass the potentially combined list of text and files
                 response = self.chat.send_message(
-                    message=message_content, # Pass the list here
-                    config=tool_config
+                    message=message_content,  # Pass the list here
+                    config=tool_config,
                 )
 
-                # --- Update manual history and calculate new token count AFTER response --- 
+                # --- Update manual history and calculate new token count AFTER response ---
                 agent_response_content = None
-                response_text = "" # Initialize empty response text
+                response_text = ""  # Initialize empty response text
                 if response.candidates and response.candidates[0].content:
                     agent_response_content = response.candidates[0].content
                     # Ensure we extract text even if other parts exist (e.g., tool calls)
                     if agent_response_content.parts:
-                         # Simple concatenation of text parts for history
-                         response_text = " ".join(p.text for p in agent_response_content.parts if hasattr(p, 'text'))
+                        # Simple concatenation of text parts for history
+                        response_text = " ".join(p.text for p in agent_response_content.parts if hasattr(p, "text"))
                     self.conversation_history.append(agent_response_content)
                 else:
                     print("\n⚠️ Agent response did not contain content for history/counting.")
@@ -192,8 +209,7 @@ class CodeAgent:
                 try:
                     # Get token count via the models endpoint
                     token_count_response = self.client.models.count_tokens(
-                        model=self.model_name,
-                        contents=self.conversation_history
+                        model=self.model_name, contents=self.conversation_history
                     )
                     self.current_token_count = token_count_response.total_tokens
                 except Exception as count_error:
@@ -205,25 +221,33 @@ class CodeAgent:
                 break
             except Exception as e:
                 print(f"\n🔴 \x1b[91mAn error occurred during interaction: {e}\x1b[0m")
-                traceback.print_exc() # Print traceback for debugging
+                traceback.print_exc()  # Print traceback for debugging
 
     def _make_verbose_tool(self, func):
         """Wrap tool function to print verbose info when called."""
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             print(f"\n🔧 Tool called: {func.__name__}, args: {args}, kwargs: {kwargs}")
             result = func(*args, **kwargs)
             print(f"\n▶️ Tool result ({func.__name__}): {result}")
             return result
+
         return wrapper
+
 
 # --- Main Execution ---
 def main():
     parser = argparse.ArgumentParser(description="Run the Code Agent")
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose tool logging')
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose tool logging")
     args = parser.parse_args()
     print("🚀 Starting Code Agent...")
-    api_key = os.getenv('GEMINI_API_KEY')
+    # api_key = os.getenv('GEMINI_API_KEY')
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("⚠️ Please set the GEMINI_API_KEY environment variable.")
+        sys.exit(1)
+    print("🔑 API Key found.")
 
     # Make project_root available to the tools module if needed indirectly
     # (Though direct definition in tools.py is preferred)
@@ -234,15 +258,16 @@ def main():
     level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(format="%(levelname)s:%(name)s:%(message)s", level=level)
     # Suppress verbose logs from external libraries
-    logging.getLogger('google_genai').setLevel(level)
-    logging.getLogger('browser_use').setLevel(level)
-    logging.getLogger('agent').setLevel(level)
-    logging.getLogger('controller').setLevel(level)
+    logging.getLogger("google_genai").setLevel(level)
+    logging.getLogger("browser_use").setLevel(level)
+    logging.getLogger("agent").setLevel(level)
+    logging.getLogger("controller").setLevel(level)
 
     agent = CodeAgent(api_key=api_key, model_name=MODEL_NAME, verbose=args.verbose)
     # Ensure agent's client is configured before starting interaction
     # This happens inside start_interaction now
     agent.start_interaction()
+
 
 if __name__ == "__main__":
     main()
